@@ -3,8 +3,8 @@ const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const { Server } = require('socket.io'); 
 const http = require('http'); 
-const jwt = require('jsonwebtoken'); // Ensure this is installed: npm install jsonwebtoken
-const cookieParser = require('cookie-parser'); // Ensure this is installed: npm install cookie-parser
+const jwt = require('jsonwebtoken'); 
+const cookieParser = require('cookie-parser'); 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
@@ -25,7 +25,6 @@ const client = new MongoClient(uri, {
     serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true }
 });
 
-// Google Gemini Setup
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 const server = http.createServer(app);
@@ -43,13 +42,9 @@ async function run() {
         const userCollection = database.collection('users');
 
         // --- AUTH & JWT APIS ---
-
         app.post('/jwt', async (req, res) => {
-            const user = req.body; // This is the 'data' variable from your frontend
-            console.log('Generating token for:', user);
-            
+            const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '3h' });
-
             res.cookie('token', token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
@@ -82,10 +77,18 @@ async function run() {
             res.send(result);
         });
 
-        // --- BOARD APIS ---
+        // --- BOARD APIS (Modified for Ownership/Privacy) ---
 
-        app.get('/allBoards', async (req, res) => {
-            const cursor = boardCollection.find().project({ elements: 0 });
+        // Fetch only boards belonging to or shared with the specific user
+        app.get('/allBoards/:email', async (req, res) => {
+            const email = req.params.email;
+            const query = {
+                $or: [
+                    { owner: email },
+                    { collaborators: { $in: [email] } }
+                ]
+            };
+            const cursor = boardCollection.find(query).project({ elements: 0 });
             const result = await cursor.toArray();
             res.send(result);
         });
@@ -96,19 +99,37 @@ async function run() {
             res.send(result);
         });
 
+        // Save board - now handles ownership and collaborator initialization
         app.put('/board/save/:roomId', async (req, res) => {
             const id = req.params.roomId;
-            const boardData = req.body;
+            const { name, elements, userEmail } = req.body; // Expect userEmail from frontend
+            
             const filter = { roomId: id };
             const options = { upsert: true };
+            
             const updateDoc = {
                 $set: {
-                    name: boardData.name,
-                    elements: boardData.elements,
+                    name: name,
+                    elements: elements,
                     lastModified: new Date()
+                },
+                // Set these ONLY if the document is being created for the first time
+                $setOnInsert: {
+                    owner: userEmail,
+                    collaborators: [] 
                 }
             };
             const result = await boardCollection.updateOne(filter, updateDoc, options);
+            res.send(result);
+        });
+
+        // NEW: Invite system endpoint
+        app.post('/board/invite', async (req, res) => {
+            const { roomId, inviteeEmail } = req.body;
+            const result = await boardCollection.updateOne(
+                { roomId: roomId },
+                { $addToSet: { collaborators: inviteeEmail } }
+            );
             res.send(result);
         });
 
@@ -121,9 +142,8 @@ async function run() {
         app.post('/generate', async (req, res) => {
             const { prompt } = req.body;
             if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
-
             try {
-                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Use stable model
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
                 const result = await model.generateContent(prompt);
                 const text = result.response.text();
                 res.status(200).json({ text });
