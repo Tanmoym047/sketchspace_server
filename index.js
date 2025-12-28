@@ -1,10 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const { Server } = require('socket.io'); 
-const http = require('http'); 
-const jwt = require('jsonwebtoken'); 
-const cookieParser = require('cookie-parser'); 
+const { Server } = require('socket.io');
+const http = require('http');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
@@ -13,7 +13,9 @@ const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-    origin: ['http://localhost:5173'], 
+    origin: ['http://localhost:5173', 
+        'https://sketchspace-46391.web.app', 
+        'https://sketchspace-46391.firebaseapp.com'],
     credentials: true
 }));
 app.use(express.json());
@@ -53,7 +55,7 @@ async function run() {
         });
 
         app.post('/logout', async (req, res) => {
-            res.clearCookie('token', { 
+            res.clearCookie('token', {
                 maxAge: 0,
                 secure: process.env.NODE_ENV === "production",
                 sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
@@ -103,10 +105,10 @@ async function run() {
         app.put('/board/save/:roomId', async (req, res) => {
             const id = req.params.roomId;
             const { name, elements, userEmail } = req.body; // Expect userEmail from frontend
-            
+
             const filter = { roomId: id };
             const options = { upsert: true };
-            
+
             const updateDoc = {
                 $set: {
                     name: name,
@@ -116,7 +118,7 @@ async function run() {
                 // Set these ONLY if the document is being created for the first time
                 $setOnInsert: {
                     owner: userEmail,
-                    collaborators: [] 
+                    collaborators: []
                 }
             };
             const result = await boardCollection.updateOne(filter, updateDoc, options);
@@ -142,13 +144,66 @@ async function run() {
         app.post('/generate', async (req, res) => {
             const { prompt } = req.body;
             if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
+
             try {
-                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                const model = genAI.getGenerativeModel({
+                    model: "gemini-2.5-flash", // Use latest for best stability
+                    generationConfig: { responseMimeType: "application/json" }
+                });
+
+                const systemPrompt = `
+            You are an expert Excalidraw JSON architect. 
+            Generate a JSON array of elements for: ${prompt}
+            
+            Strict Rules:
+            1. Use ONLY these types: "rectangle", "ellipse", "diamond", "arrow", "text".
+            2. Every element MUST have: x, y, width, height, strokeColor, backgroundColor.
+            3. "text" elements must have a "text" field and a "fontSize" (default 20).
+            4. "arrow" elements must have "points" (an array of [x, y] coordinates starting at [0,0]).
+            5. Ensure all coordinates and dimensions are positive numbers.
+            6. Return ONLY a valid JSON array.
+        `;
+
+                const result = await model.generateContent(systemPrompt);
+                const text = result.response.text();
+
+                // Strip any accidental markdown formatting
+                const cleanJson = text.replace(/```json|```/g, "").trim();
+                const parsed = JSON.parse(cleanJson);
+
+                // Ensure we send back an array
+                const elements = Array.isArray(parsed) ? parsed : (parsed.elements || []);
+
+                res.status(200).json({ elements });
+            } catch (error) {
+                console.error('Gemini error:', error.message);
+                res.status(500).json({ error: 'AI Error', details: error.message });
+            }
+        });
+
+        // chatbot
+        app.post('/chatbot/generate', async (req, res) => {
+            // Extract the user prompt from the request body
+            const { prompt } = req.body;
+
+            // Check if the prompt is provided
+            if (!prompt) {
+                return res.status(400).json({ error: 'Prompt is required.' });
+            }
+
+            try {
+                // Get the specified generative model
+                const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+                // Generate content using the model and the user's prompt
                 const result = await model.generateContent(prompt);
                 const text = result.response.text();
+
+                // Send the generated text back as a JSON response
                 res.status(200).json({ text });
             } catch (error) {
-                console.error('Gemini error:', error);
+                // Log and handle any errors during the AI generation process
+                console.error('Error generating text:', error);
                 res.status(500).json({ error: 'Failed to generate content.' });
             }
         });
