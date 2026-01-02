@@ -15,7 +15,9 @@ const port = process.env.PORT || 5000;
 app.use(cors({
     origin: ['http://localhost:5173', 
         'https://sketchspace-46391.web.app', 
-        'https://sketchspace-46391.firebaseapp.com'],
+        'https://sketchspace-46391.firebaseapp.com',
+        'https://sketchspace-server.onrender.com'
+    ],
     credentials: true
 }));
 app.use(express.json());
