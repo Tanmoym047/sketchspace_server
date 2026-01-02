@@ -121,7 +121,6 @@ async function run() {
                 $set: {
                     name: name,
                     elements: elements,
-                    files: files || {},
                     lastModified: new Date()
                 },
                 // Set these ONLY if the document is being created for the first time
